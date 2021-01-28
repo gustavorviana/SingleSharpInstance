@@ -20,7 +20,6 @@ namespace SingleSharpInstance
 
         #region Private fields
 
-        private readonly SynchronizationContext _syncContext = SynchronizationContext.Current;
         private readonly CancellationTokenSource tSource = new CancellationTokenSource();
         private readonly NamedPipeServerStream _server;
         private readonly SingleName _name;
@@ -32,7 +31,9 @@ namespace SingleSharpInstance
 
         #region Public Event/Fields
 
+        public SynchronizationContext SyncContext { get; set; } = SynchronizationContext.Current;
         public event EventHandler<ActivationEventArgs> OnReceiveActivation;
+        public event ThreadExceptionEventHandler OnException;
 
         /// <summary>
         /// Retrieve the connection id.
@@ -221,10 +222,9 @@ namespace SingleSharpInstance
             this._receivedPackets++;
 
             var _args = new ActivationEventArgs(args, this._receivedPackets == 1);
-            if (_syncContext != null)
+            if (SyncContext != null)
             {
-                _syncContext.Post(
-                    acArgs => this.OnReceiveActivation?.Invoke(this, acArgs as ActivationEventArgs), _args);
+                SyncContext.Post(_ => this.OnReceiveActivation?.Invoke(this, _args), null);
                 return;
             }
 
@@ -241,8 +241,8 @@ namespace SingleSharpInstance
 
                 source.Cancel();
             }
-            this.tSource.Token.Register(CancelChildren);
 
+            this.tSource.Token.Register(CancelChildren);
             while (!this.tSource.IsCancellationRequested)
             {
                 try
@@ -281,6 +281,14 @@ namespace SingleSharpInstance
                 }
                 catch (ObjectDisposedException)
                 {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    if (this.OnException == null)
+                        throw ex;
+
+                    this.OnException.Invoke(this, new ThreadExceptionEventArgs(ex));
                     break;
                 }
             }
